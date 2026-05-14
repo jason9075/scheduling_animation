@@ -85,6 +85,7 @@
       display: grid;
       grid-template-columns: 170px 1fr 200px;
       flex: 1;
+      min-height: 0; /* prevent flex children from overflowing */
       overflow: hidden;
     }
 
@@ -195,6 +196,40 @@
 
     #ctx-switches { font-size:0.72rem; color:var(--nord4); text-align:center; }
 
+    /* ── Gantt section ───────────────────────────────────── */
+    #gantt-section {
+      flex-shrink: 0;
+      height: 82px;
+      display: flex;
+      flex-direction: column;
+      border-top: 1px solid var(--nord2);
+    }
+
+    #gantt-section > h2 {
+      padding: 0.3rem 0.75rem;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--nord8);
+      background: var(--nord1);
+      border-bottom: 1px solid var(--nord2);
+      flex-shrink: 0;
+    }
+
+    #gantt-wrap {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    #gantt-canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      display: block;
+    }
+
     /* ── Footer / Stats ──────────────────────────────────── */
     #footer {
       display: flex;
@@ -242,8 +277,8 @@
     Algorithm
     <select id="algo-select">
       <option value="FCFS">FCFS</option>
-      <option value="SJF"      disabled>SJF (phase 2)</option>
-      <option value="RR"       disabled>RR (phase 2)</option>
+      <option value="SJF">SJF</option>
+      <option value="RR">RR</option>
       <option value="SRTF"     disabled>SRTF (phase 3)</option>
       <option value="Priority" disabled>Priority (phase 3)</option>
       <option value="MLFQ"     disabled>MLFQ (phase 3)</option>
@@ -268,6 +303,14 @@
     <input type="range" id="arrival-slider" min="0.2" max="3" step="0.1" value="1" />
     <span id="arrival-val">1.0/s</span>
   </label>
+
+  <div id="quantum-group" hidden>
+    <label>
+      Quantum
+      <input type="range" id="quantum-slider" min="0.5" max="5" step="0.5" value="2" />
+      <span id="quantum-val">2.0 s</span>
+    </label>
+  </div>
 
   <button id="btn-reset">Reset</button>
   <button id="btn-math" title="Math behind the scene" style="font-size:1rem">💡</button>
@@ -302,6 +345,13 @@
   </section>
 
 </main>
+
+<section id="gantt-section">
+  <h2>Execution Timeline</h2>
+  <div id="gantt-wrap">
+    <canvas id="gantt-canvas"></canvas>
+  </div>
+</section>
 
 <footer id="footer">
   <span>Completed: <b id="s-done">0</b></span>
