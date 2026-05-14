@@ -23,6 +23,8 @@ export class Task {
     this.arrivalTime = simTime;
     this.waitTime = 0;
     this.color = TASK_COLORS[(id - 1) % TASK_COLORS.length];
+    this.priority = Math.ceil(Math.random() * 5); // 1 = highest, 5 = lowest
+    this.level = 0;                                // MLFQ queue level (0–2)
   }
 }
 
@@ -168,19 +170,135 @@ export class RRScheduler extends BaseScheduler {
   }
 }
 
+// ── SRTF (Shortest Remaining Time First — preemptive SJF) ────────────────────
+
+export class SRTFScheduler extends BaseScheduler {
+  tick(dt) {
+    this.simTime += dt;
+    this._runProducer(dt);
+    this._accrueWait(dt);
+    this._execute(dt);
+    this._preemptCheck(); // may evict current if a shorter task arrived
+    this._dispatch();
+  }
+
+  _preemptCheck() {
+    if (!this.currentTask || this.readyQueue.length === 0) return;
+    let minRemaining = Infinity;
+    for (const t of this.readyQueue) {
+      if (t.remainingTime < minRemaining) minRemaining = t.remainingTime;
+    }
+    if (minRemaining < this.currentTask.remainingTime) {
+      const task = this.currentTask;
+      this._evictCPU();
+      this.readyQueue.push(task);
+      this.contextSwitches++;
+    }
+  }
+
+  _dispatch() {
+    if (this.currentTask || this.readyQueue.length === 0) return;
+    let minIdx = 0;
+    for (let i = 1; i < this.readyQueue.length; i++) {
+      if (this.readyQueue[i].remainingTime < this.readyQueue[minIdx].remainingTime) minIdx = i;
+    }
+    this._assignCPU(this.readyQueue.splice(minIdx, 1)[0]);
+  }
+}
+
+// ── Priority (non-preemptive) ─────────────────────────────────────────────────
+
+export class PriorityScheduler extends BaseScheduler {
+  /** Pick the task with the lowest priority number (1 = most urgent). */
+  _dispatch() {
+    if (this.currentTask || this.readyQueue.length === 0) return;
+    let bestIdx = 0;
+    for (let i = 1; i < this.readyQueue.length; i++) {
+      if (this.readyQueue[i].priority < this.readyQueue[bestIdx].priority) bestIdx = i;
+    }
+    this._assignCPU(this.readyQueue.splice(bestIdx, 1)[0]);
+  }
+}
+
+// ── MLFQ (Multi-Level Feedback Queue) ────────────────────────────────────────
+
+export class MLFQScheduler extends BaseScheduler {
+  constructor() {
+    super();
+    this.quantums      = [1.0, 2.0, Infinity]; // Q0 / Q1 / Q2 (FCFS)
+    this._quantumAccum = 0;
+    this._currentLevel = 0;
+  }
+
+  tick(dt) {
+    this.simTime += dt;
+    this._runProducer(dt);
+    this._accrueWait(dt);
+    this._execute(dt);
+    this._checkQuantum(dt);
+    this._dispatch();
+  }
+
+  _runProducer(dt) {
+    if (this.nextId > this.taskCap) return;
+    this._prodAccum += dt;
+    const interval = 1 / this.arrivalRate;
+    while (this._prodAccum >= interval && this.nextId <= this.taskCap) {
+      this._prodAccum -= interval;
+      const task = new Task(this.nextId++, this.simTime);
+      task.level = 0; // every new task enters at Q0
+      this.readyQueue.push(task);
+    }
+  }
+
+  _checkQuantum(dt) {
+    if (!this.currentTask) return;
+    const q = this.quantums[this._currentLevel];
+    if (!isFinite(q)) return; // Q2 is FCFS — no preemption
+    this._quantumAccum += dt;
+    if (this._quantumAccum >= q) {
+      const task = this.currentTask;
+      this._evictCPU();
+      task.level = Math.min(task.level + 1, 2); // demote one level
+      this.readyQueue.push(task);
+      this.contextSwitches++;
+      this._quantumAccum = 0;
+    }
+  }
+
+  _onTaskComplete(_task) {
+    this._quantumAccum = 0;
+  }
+
+  /** Always pick from the highest-priority (lowest-numbered) non-empty sub-queue. */
+  _dispatch() {
+    if (this.currentTask || this.readyQueue.length === 0) return;
+    let bestIdx = 0;
+    for (let i = 1; i < this.readyQueue.length; i++) {
+      if (this.readyQueue[i].level < this.readyQueue[bestIdx].level) bestIdx = i;
+    }
+    this._currentLevel = this.readyQueue[bestIdx].level;
+    this._quantumAccum = 0;
+    this._assignCPU(this.readyQueue.splice(bestIdx, 1)[0]);
+  }
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 /**
- * @param {'FCFS'|'SJF'|'RR'} algo
+ * @param {'FCFS'|'SJF'|'RR'|'SRTF'|'Priority'|'MLFQ'} algo
  * @param {{ arrivalRate?: number, timeQuantum?: number }} opts
  * @returns {BaseScheduler}
  */
 export function createScheduler(algo, opts = {}) {
   let s;
   switch (algo) {
-    case 'SJF': s = new SJFScheduler(); break;
-    case 'RR':  s = new RRScheduler();  break;
-    default:    s = new FCFSScheduler(); break;
+    case 'SJF':      s = new SJFScheduler();      break;
+    case 'RR':       s = new RRScheduler();        break;
+    case 'SRTF':     s = new SRTFScheduler();      break;
+    case 'Priority': s = new PriorityScheduler();  break;
+    case 'MLFQ':     s = new MLFQScheduler();      break;
+    default:         s = new FCFSScheduler();       break;
   }
   if (opts.arrivalRate != null) s.arrivalRate = opts.arrivalRate;
   if (opts.timeQuantum != null && s instanceof RRScheduler) s.timeQuantum = opts.timeQuantum;

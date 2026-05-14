@@ -1,4 +1,4 @@
-import { createScheduler, RRScheduler, STARVATION_LIMIT, MAX_TASKS } from './scheduler.js';
+import { createScheduler, RRScheduler, MLFQScheduler, STARVATION_LIMIT, MAX_TASKS } from './scheduler.js';
 import { renderGantt, watchGanttSize, WINDOW_SECS } from './gantt.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -43,12 +43,25 @@ function makeTaskEl(t, extraClass = '') {
   const isCurrent  = extraClass.includes('current');
   const isStarving = extraClass.includes('starving');
   const pct = ((t.burstTime - t.remainingTime) / t.burstTime * 100).toFixed(1);
+
+  // Priority badge (Priority algo only)
+  const showPriority = currentAlgo === 'Priority';
+  const priorityBadge = showPriority
+    ? `<span class="priority-badge p${t.priority}" title="Priority ${t.priority}">${t.priority}</span>`
+    : '';
+
+  // MLFQ level tag on current task
+  const levelTag = (currentAlgo === 'MLFQ' && isCurrent && t.level != null)
+    ? ` <span class="mlfq-level-tag">Q${t.level}</span>`
+    : '';
+
   const div = document.createElement('div');
   div.className = ('task-block ' + extraClass).trim();
   div.style.backgroundColor = t.color;
   div.innerHTML =
     `<div class="task-bar" style="width:${pct}%"></div>` +
-    `<div class="task-id">${isCurrent ? '▶ ' : ''}T${t.id}</div>` +
+    `${priorityBadge}` +
+    `<div class="task-id">${isCurrent ? '▶ ' : ''}T${t.id}${levelTag}</div>` +
     `<div class="task-meta">` +
       `<span>Burst ${t.burstTime.toFixed(1)} s</span>` +
       `<span>${isCurrent
@@ -59,24 +72,46 @@ function makeTaskEl(t, extraClass = '') {
   return div;
 }
 
+const MLFQ_LABELS = ['Q0 · q=1 s', 'Q1 · q=2 s', 'Q2 · FCFS'];
+
+function appendDivider() {
+  const sep = document.createElement('div');
+  sep.className = 'queue-divider';
+  queueListEl.appendChild(sep);
+}
+
+function appendQueueHeader(label) {
+  const h = document.createElement('div');
+  h.className = 'mlfq-header';
+  h.textContent = label;
+  queueListEl.appendChild(h);
+}
+
 function renderQueue() {
   queueListEl.innerHTML = '';
 
-  // Currently executing task at the top, highlighted
+  // ── Currently executing task (always at top, highlighted) ─────────────────
   if (sched.currentTask) {
     queueListEl.appendChild(makeTaskEl(sched.currentTask, 'current'));
-
-    if (sched.readyQueue.length > 0) {
-      const sep = document.createElement('div');
-      sep.className = 'queue-divider';
-      queueListEl.appendChild(sep);
-    }
+    if (sched.readyQueue.length > 0) appendDivider();
   }
 
-  // Waiting tasks
-  for (const t of sched.readyQueue) {
-    const extra = t.waitTime >= STARVATION_LIMIT ? 'starving' : '';
-    queueListEl.appendChild(makeTaskEl(t, extra));
+  // ── Waiting tasks ──────────────────────────────────────────────────────────
+  if (sched instanceof MLFQScheduler) {
+    // Group by MLFQ level (Q0 → Q1 → Q2)
+    for (let lvl = 0; lvl < 3; lvl++) {
+      const tasks = sched.readyQueue.filter((t) => t.level === lvl);
+      if (tasks.length === 0) continue;
+      appendQueueHeader(MLFQ_LABELS[lvl]);
+      for (const t of tasks) {
+        queueListEl.appendChild(makeTaskEl(t, t.waitTime >= STARVATION_LIMIT ? 'starving' : ''));
+      }
+    }
+  } else {
+    for (const t of sched.readyQueue) {
+      const extra = t.waitTime >= STARVATION_LIMIT ? 'starving' : '';
+      queueListEl.appendChild(makeTaskEl(t, extra));
+    }
   }
 
   const total = (sched.currentTask ? 1 : 0) + sched.readyQueue.length;
@@ -216,6 +251,9 @@ function switchAlgo(algo) {
   };
   sched  = createScheduler(algo, opts);
   lastTs = null;
+  ganttViewEnd = null;
+  btnGanttLive.hidden = true;
+  ganttCanvas.style.cursor = 'default';
   $('quantum-group').hidden = algo !== 'RR';
 }
 
@@ -318,6 +356,66 @@ const MODAL = {
 <p>佇列有 $n$ 個任務時，最長首次響應時間為：</p>
 <p>$$R_{\\max} = (n - 1) \\cdot q$$</p>
 <p>取捨：$q$ 越小響應越快，但 context switch 開銷越大；$q$ 越大則行為趨近 FCFS。</p>
+    `,
+  },
+  SRTF: {
+    en: `
+<p><strong>SRTF — Shortest Remaining Time First (preemptive SJF)</strong></p>
+<p>Whenever a new task arrives, compare its burst time against the current task's remaining time. If the newcomer is shorter, preempt immediately:</p>
+<p>$$\\text{preempt if } \\exists\\, j \\in \\text{queue}: R_j < R_{\\text{running}}$$</p>
+<p>SRTF achieves the theoretical minimum average wait time across <em>all</em> scheduling policies:</p>
+<p>$$\\bar{W}_{\\text{SRTF}} \\le \\bar{W}_{\\text{any policy}}$$</p>
+<p><strong>Cost</strong> — every preemption is a context switch, so total switches can be high. Long tasks face starvation if a stream of short tasks keeps arriving.</p>
+    `,
+    zhTW: `
+<p><strong>SRTF — 最短剩餘時間優先（搶佔式 SJF）</strong></p>
+<p>每當新任務抵達，比較其執行時間與當前任務的剩餘時間。若新任務更短，則立即搶佔：</p>
+<p>$$\\text{若 } \\exists\\, j \\in \\text{queue}: R_j < R_{\\text{running}} \\text{，則搶佔}$$</p>
+<p>SRTF 在所有排程策略中達到理論上最低的平均等待時間：</p>
+<p>$$\\bar{W}_{\\text{SRTF}} \\le \\bar{W}_{\\text{任意策略}}$$</p>
+<p><strong>代價</strong>——每次搶佔都是一次 context switch，總次數可能很高。若短任務持續湧入，長任務仍會飢餓。</p>
+    `,
+  },
+  Priority: {
+    en: `
+<p><strong>Priority Scheduling (non-preemptive)</strong></p>
+<p>When the CPU is free, select the task with the <em>lowest priority number</em> (1 = most urgent, 5 = least urgent):</p>
+<p>$$\\text{next} = \\arg\\min_{i \\in \\text{queue}}\\, P_i$$</p>
+<p>Ties are broken by arrival order (FCFS). The coloured badge on each task card shows its priority level: <span style="color:var(--nord11)">●</span> P1 → <span style="color:var(--nord12)">●</span> P2 → <span style="color:var(--nord13)">●</span> P3 → <span style="color:var(--nord14)">●</span> P4 → <span style="color:var(--nord9)">●</span> P5.</p>
+<p><strong>Starvation</strong> — low-priority tasks (P4, P5) may wait indefinitely. The classic fix is <em>aging</em>: gradually raise a task's priority the longer it waits.</p>
+    `,
+    zhTW: `
+<p><strong>優先權排程（非搶佔）</strong></p>
+<p>CPU 空閒時，選擇優先權數字最小的任務（1 = 最緊急，5 = 最低優先）：</p>
+<p>$$\\text{next} = \\arg\\min_{i \\in \\text{queue}}\\, P_i$$</p>
+<p>優先權相同時依抵達順序（FCFS）決定。每張任務卡上的彩色數字徽章顯示其優先級：<span style="color:var(--nord11)">●</span> P1 → <span style="color:var(--nord12)">●</span> P2 → <span style="color:var(--nord13)">●</span> P3 → <span style="color:var(--nord14)">●</span> P4 → <span style="color:var(--nord9)">●</span> P5。</p>
+<p><strong>飢餓問題</strong>——低優先權任務（P4、P5）可能永遠等不到 CPU。經典解法是 <em>老化（Aging）</em>：等待越久則自動調高優先權。</p>
+    `,
+  },
+  MLFQ: {
+    en: `
+<p><strong>MLFQ — Multi-Level Feedback Queue</strong></p>
+<p>Tasks start at queue level 0 (highest priority) and are demoted one level each time they exhaust their quantum:</p>
+<p>$$\\text{level}_{i} \\leftarrow \\min(\\text{level}_{i} + 1,\\; 2) \\quad \\text{on quantum expiry}$$</p>
+<table style="border-collapse:collapse;width:100%;margin:0.5rem 0;font-size:0.8rem">
+  <tr style="color:var(--nord8)"><th style="text-align:left;padding:2px 6px">Level</th><th style="text-align:left;padding:2px 6px">Quantum</th><th style="text-align:left;padding:2px 6px">Policy</th></tr>
+  <tr><td style="padding:2px 6px">Q0</td><td style="padding:2px 6px">1 s</td><td style="padding:2px 6px">Preemptive RR</td></tr>
+  <tr><td style="padding:2px 6px">Q1</td><td style="padding:2px 6px">2 s</td><td style="padding:2px 6px">Preemptive RR</td></tr>
+  <tr><td style="padding:2px 6px">Q2</td><td style="padding:2px 6px">∞</td><td style="padding:2px 6px">FCFS</td></tr>
+</table>
+<p>The scheduler always runs from the highest non-empty queue. Short/interactive tasks stay near Q0 for fast response; CPU-bound tasks sink to Q2 for efficiency — without any prior knowledge of burst times.</p>
+    `,
+    zhTW: `
+<p><strong>MLFQ — 多級回饋佇列</strong></p>
+<p>所有任務從 Q0（最高優先）進入。每次用完時間量子後降一級：</p>
+<p>$$\\text{level}_{i} \\leftarrow \\min(\\text{level}_{i} + 1,\\; 2) \\quad \\text{（量子耗盡時）}$$</p>
+<table style="border-collapse:collapse;width:100%;margin:0.5rem 0;font-size:0.8rem">
+  <tr style="color:var(--nord8)"><th style="text-align:left;padding:2px 6px">層級</th><th style="text-align:left;padding:2px 6px">量子</th><th style="text-align:left;padding:2px 6px">策略</th></tr>
+  <tr><td style="padding:2px 6px">Q0</td><td style="padding:2px 6px">1 s</td><td style="padding:2px 6px">搶佔式 RR</td></tr>
+  <tr><td style="padding:2px 6px">Q1</td><td style="padding:2px 6px">2 s</td><td style="padding:2px 6px">搶佔式 RR</td></tr>
+  <tr><td style="padding:2px 6px">Q2</td><td style="padding:2px 6px">∞</td><td style="padding:2px 6px">FCFS</td></tr>
+</table>
+<p>排程器永遠從最高層非空佇列取任務。短任務／互動型任務停在 Q0 享有快速響應；CPU 密集型任務沉降至 Q2 以減少切換開銷——無需預先知道執行時間。</p>
     `,
   },
 };
