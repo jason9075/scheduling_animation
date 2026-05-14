@@ -3,205 +3,326 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>gfx-lab</title>
+  <title>CPU Scheduling — gfx-lab</title>
 
-  <!-- KaTeX -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
-          onload="renderMathInElement(document.body, {
-            delimiters: [
-              {left: '$$', right: '$$', display: true},
-              {left: '$', right: '$', display: false}
-            ],
-            macros: {
-              '\\R': '\\mathbb{R}',
-              '\\vec': '\\mathbf{#1}',
-              '\\mat': '\\mathbf{#1}'
-            }
-          });"></script>
+    onload="renderMathInElement(document.body,{
+      delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]
+    })"></script>
 
-  <!-- Prism.js (Nord theme) — syntax highlighting for modal code blocks -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prism-themes@1.9.0/themes/prism-nord.css" />
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
-
-  <!-- Import Maps for Three.js (ESM) -->
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
-    }
-  }
-  </script>
 
   <style>
-    /* Nord colour palette */
     :root {
-      --nord0:  #2E3440;
-      --nord1:  #3B4252;
-      --nord2:  #434C5E;
-      --nord3:  #4C566A;
-      --nord4:  #D8DEE9;
-      --nord5:  #E5E9F0;
-      --nord6:  #ECEFF4;
-      --nord7:  #8FBCBB;
-      --nord8:  #88C0D0;
-      --nord9:  #81A1C1;
-      --nord10: #5E81AC;
-      --nord11: #BF616A;
-      --nord12: #D08770;
-      --nord13: #EBCB8B;
-      --nord14: #A3BE8C;
-      --nord15: #B48EAD;
+      --nord0:#2E3440; --nord1:#3B4252; --nord2:#434C5E; --nord3:#4C566A;
+      --nord4:#D8DEE9; --nord5:#E5E9F0; --nord6:#ECEFF4;
+      --nord7:#8FBCBB; --nord8:#88C0D0; --nord9:#81A1C1; --nord10:#5E81AC;
+      --nord11:#BF616A; --nord12:#D08770; --nord13:#EBCB8B;
+      --nord14:#A3BE8C; --nord15:#B48EAD;
     }
 
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * { margin:0; padding:0; box-sizing:border-box; }
 
     body {
       background: var(--nord0);
       color: var(--nord4);
       font-family: 'JetBrains Mono', monospace, sans-serif;
+      font-size: 13px;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      min-height: 100vh;
+      height: 100vh;
+      overflow: hidden;
     }
 
-    canvas { display: block; }
-
-    #info {
-      position: absolute;
-      top: 1rem;
-      left: 1rem;
-      color: var(--nord8);
-      font-size: 0.85rem;
-    }
-
-    #toolbar {
-      position: fixed;
-      top: 1rem;
-      left: 50%;
-      transform: translateX(-50%);
+    /* ── Header ──────────────────────────────────────────── */
+    #header {
       display: flex;
-      gap: 0.75rem;
       align-items: center;
-      padding: 0.75rem 1rem;
-      border: 1px solid var(--nord3);
-      border-radius: 999px;
-      background: rgba(59, 66, 82, 0.88);
-      backdrop-filter: blur(10px);
-      z-index: 20;
+      gap: 1.25rem;
+      flex-wrap: wrap;
+      padding: 0.55rem 1rem;
+      background: var(--nord1);
+      border-bottom: 1px solid var(--nord3);
+      flex-shrink: 0;
     }
 
-    #toolbar label,
-    #toolbar select,
-    #toolbar button {
+    #header label { display:flex; align-items:center; gap:0.35rem; }
+
+    select {
+      background: var(--nord2);
+      border: 1px solid var(--nord3);
+      color: var(--nord6);
+      border-radius: 4px;
+      padding: 0.2rem 0.45rem;
       font: inherit;
     }
 
-    #toolbar select,
-    #toolbar button,
-    .modal-toggle {
+    button {
+      background: var(--nord2);
       border: 1px solid var(--nord3);
-      border-radius: 999px;
-      background: var(--nord1);
       color: var(--nord6);
-      padding: 0.45rem 0.8rem;
-    }
-
-    .icon-button {
-      font-size: 1.1rem;
-      line-height: 1;
+      border-radius: 4px;
+      padding: 0.25rem 0.55rem;
       cursor: pointer;
+      font: inherit;
+      transition: background 0.12s;
     }
+    button:hover { background: var(--nord3); }
+    button.active { background: var(--nord10); border-color: var(--nord9); }
 
-    #math-modal[hidden] {
-      display: none;
-    }
+    #speed-group { display:flex; gap:0.3rem; align-items:center; }
+    #speed-group > span { color:var(--nord9); font-size:0.8rem; margin-right:0.1rem; }
 
-    #math-modal {
-      position: fixed;
-      inset: 0;
+    input[type=range] { accent-color: var(--nord8); cursor:pointer; }
+
+    #sim-clock { margin-left:auto; color:var(--nord8); font-weight:700; white-space:nowrap; }
+
+    /* ── Main 3-column layout ─────────────────────────────── */
+    #main {
       display: grid;
-      place-items: center;
-      background: rgba(46, 52, 64, 0.78);
-      z-index: 50;
+      grid-template-columns: 170px 1fr 200px;
+      flex: 1;
+      overflow: hidden;
     }
 
+    section {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-right: 1px solid var(--nord2);
+    }
+    section:last-child { border-right: none; }
+
+    section > h2 {
+      padding: 0.4rem 0.75rem;
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--nord8);
+      background: var(--nord1);
+      border-bottom: 1px solid var(--nord2);
+      flex-shrink: 0;
+    }
+
+    /* ── Producer ────────────────────────────────────────── */
+    #producer { align-items:center; padding-top:2rem; gap:0.4rem; }
+
+    #factory { display:flex; flex-direction:column; align-items:center; gap:0.55rem; }
+
+    #factory-icon { font-size:3rem; line-height:1; user-select:none; }
+
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .spinning { animation: spin 1s linear infinite; display:inline-block; }
+
+    #factory-label { font-size:0.72rem; color:var(--nord14); }
+    #factory-total { font-size:0.72rem; color:var(--nord4); }
+
+    /* ── Ready Queue ─────────────────────────────────────── */
+    #queue-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+
+    .task-block {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.6rem;
+      border-radius: 5px;
+      border: 1px solid rgba(255,255,255,0.12);
+      flex-shrink: 0;
+    }
+
+    .task-block.starving {
+      border-color: var(--nord11) !important;
+      animation: pulse-warn 1.4s ease-in-out infinite;
+    }
+
+    @keyframes pulse-warn {
+      0%,100% { box-shadow: 0 0 0 0 rgba(191,97,106,0.6); }
+      50%      { box-shadow: 0 0 0 5px rgba(191,97,106,0); }
+    }
+
+    .task-id {
+      font-weight: 700;
+      font-size: 0.82rem;
+      min-width: 2.2rem;
+      color: rgba(0,0,0,0.75);
+    }
+
+    .task-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 0.08rem;
+      flex: 1;
+    }
+    .task-meta span { font-size:0.67rem; color:rgba(0,0,0,0.6); }
+
+    /* ── CPU Core ────────────────────────────────────────── */
+    #cpu-section { align-items:center; padding:1.5rem 1rem; gap:0.85rem; }
+
+    #cpu-slot {
+      width: 105px;
+      height: 105px;
+      border-radius: 50%;
+      border: 3px solid var(--nord3);
+      background: var(--nord1);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.25s, border-color 0.25s, box-shadow 0.25s;
+    }
+
+    #cpu-slot.busy {
+      border-color: var(--nord14);
+      box-shadow: 0 0 20px rgba(163,190,140,0.3);
+    }
+
+    #cpu-task-id   { font-size:1.05rem; font-weight:700; }
+    #cpu-remaining { font-size:0.62rem; margin-top:0.12rem; }
+
+    .bar-wrap { width:100%; height:6px; background:var(--nord2); border-radius:3px; overflow:hidden; }
+    #cpu-bar  { height:100%; background:var(--nord14); border-radius:3px; width:0%; transition:width 0.1s linear; }
+
+    #ctx-switches { font-size:0.72rem; color:var(--nord4); text-align:center; }
+
+    /* ── Footer / Stats ──────────────────────────────────── */
+    #footer {
+      display: flex;
+      gap: 2rem;
+      padding: 0.45rem 1rem;
+      background: var(--nord1);
+      border-top: 1px solid var(--nord3);
+      flex-shrink: 0;
+      font-size: 0.78rem;
+    }
+    #footer b { color: var(--nord13); }
+
+    /* ── Math Modal ──────────────────────────────────────── */
+    #math-modal[hidden] { display:none; }
+    #math-modal {
+      position:fixed; inset:0;
+      display:grid; place-items:center;
+      background:rgba(46,52,64,0.82);
+      z-index:50;
+    }
     .modal-panel {
-      width: min(720px, calc(100vw - 2rem));
+      width: min(680px, calc(100vw - 2rem));
       max-height: calc(100vh - 2rem);
       overflow: auto;
       background: var(--nord1);
       border: 1px solid var(--nord3);
-      border-radius: 20px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+      border-radius: 16px;
       padding: 1.25rem;
     }
-
     .modal-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 1rem;
-      margin-bottom: 1rem;
+      display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;
     }
-
-    .modal-header h2 {
-      font-size: 1rem;
-      color: var(--nord8);
-    }
-
-    .modal-actions {
-      display: flex;
-      gap: 0.5rem;
-      align-items: center;
-    }
-
+    .modal-header h2 { color:var(--nord8); font-size:0.9rem; }
+    .modal-actions { display:flex; gap:0.45rem; }
     .modal-body {
-      display: grid;
-      gap: 0.85rem;
-      line-height: 1.7;
-      color: var(--nord5);
+      display:grid; gap:0.75rem; line-height:1.75; color:var(--nord5); font-size:0.83rem;
     }
-
-    .modal-body pre[class*="language-"] {
-      border-radius: 8px;
-      overflow-x: auto;
-      font-size: 0.82rem;
-      margin: 0;
-    }
+    .modal-body pre[class*=language-] { border-radius:6px; font-size:0.78rem; }
   </style>
 </head>
 <body>
 
-  <div id="info">gfx-lab | Three.js + KaTeX + Nord</div>
-  <div id="toolbar" aria-label="Tool controls">
-    <label for="render-mode">Render Mode</label>
-    <select id="render-mode">
-      <option value="wireframe">Wireframe</option>
-      <option value="solid">Solid</option>
+<header id="header">
+  <label>
+    Algorithm
+    <select id="algo-select">
+      <option value="FCFS">FCFS</option>
+      <option value="SJF"      disabled>SJF (phase 2)</option>
+      <option value="RR"       disabled>RR (phase 2)</option>
+      <option value="SRTF"     disabled>SRTF (phase 3)</option>
+      <option value="Priority" disabled>Priority (phase 3)</option>
+      <option value="MLFQ"     disabled>MLFQ (phase 3)</option>
+      <option value="HRRN"     disabled>HRRN (phase 4)</option>
+      <option value="Lottery"  disabled>Lottery (phase 4)</option>
+      <option value="EDF"      disabled>EDF (phase 4)</option>
     </select>
-    <button id="pause-button" type="button">Pause Rotation</button>
-    <button id="open-math" class="icon-button" type="button" aria-haspopup="dialog" aria-controls="math-modal" aria-label="Explain the math">💡</button>
-  </div>
-  <canvas id="canvas"></canvas>
+  </label>
 
-  <div id="math-modal" role="dialog" aria-modal="true" aria-labelledby="math-title" hidden>
-    <div class="modal-panel">
-      <div class="modal-header">
-        <h2 id="math-title">Math Behind the Scene</h2>
-        <div class="modal-actions">
-          <button id="language-toggle" class="modal-toggle" type="button">Eng/中</button>
-          <button id="close-math" class="modal-toggle" type="button" aria-label="Close">Close</button>
-        </div>
-      </div>
-      <div id="math-content" class="modal-body"></div>
+  <div id="speed-group">
+    <span>Speed</span>
+    <button id="btn-pause">Pause</button>
+    <button id="btn-step" title="Advance 0.5 sim-seconds">Step</button>
+    <button class="speed-btn" data-spd="0.5">0.5×</button>
+    <button class="speed-btn active" data-spd="1">1×</button>
+    <button class="speed-btn" data-spd="2">2×</button>
+    <button class="speed-btn" data-spd="4">4×</button>
+  </div>
+
+  <label>
+    Arrival Rate
+    <input type="range" id="arrival-slider" min="0.2" max="3" step="0.1" value="1" />
+    <span id="arrival-val">1.0/s</span>
+  </label>
+
+  <button id="btn-reset">Reset</button>
+  <button id="btn-math" title="Math behind the scene" style="font-size:1rem">💡</button>
+
+  <div id="sim-clock">T = 0.0 s</div>
+</header>
+
+<main id="main">
+
+  <section id="producer">
+    <h2>Producer</h2>
+    <div id="factory">
+      <span id="factory-icon">⚙️</span>
+      <div id="factory-label">Running</div>
+      <div id="factory-total">Generated: 0</div>
     </div>
-  </div>
+  </section>
 
-  <script type="module" src="./src/main.js"></script>
+  <section id="ready-queue-section">
+    <h2>Ready Queue <span id="queue-count">(0)</span></h2>
+    <div id="queue-list"></div>
+  </section>
+
+  <section id="cpu-section">
+    <h2>CPU Core</h2>
+    <div id="cpu-slot">
+      <span id="cpu-task-id"   style="color:var(--nord4)">Idle</span>
+      <span id="cpu-remaining" style="color:var(--nord3)">—</span>
+    </div>
+    <div class="bar-wrap"><div id="cpu-bar"></div></div>
+    <div id="ctx-switches">Context Switches: 0</div>
+  </section>
+
+</main>
+
+<footer id="footer">
+  <span>Completed: <b id="s-done">0</b></span>
+  <span>Avg Wait: <b id="s-wait">—</b></span>
+  <span>CPU Util: <b id="s-util">—</b></span>
+  <span>Throughput: <b id="s-tput">—</b></span>
+</footer>
+
+<div id="math-modal" role="dialog" aria-modal="true" hidden>
+  <div class="modal-panel">
+    <div class="modal-header">
+      <h2>Math Behind the Scene</h2>
+      <div class="modal-actions">
+        <button id="lang-toggle">Eng/中</button>
+        <button id="close-modal">Close</button>
+      </div>
+    </div>
+    <div id="math-content" class="modal-body"></div>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
 </body>
 </html>
