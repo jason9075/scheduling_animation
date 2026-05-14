@@ -1,0 +1,16 @@
+# Nix
+result
+result-*
+.direnv/
+
+# Neovim
+*.swp
+*.swo
+.netrwhist
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agents
+.codex
