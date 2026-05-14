@@ -33,6 +33,9 @@ const ganttCanvas     = /** @type {HTMLCanvasElement} */ ($('gantt-canvas'));
 const btnGanttLive    = $('btn-gantt-live');
 const mathModal      = $('math-modal');
 const mathContent    = $('math-content');
+const sMissedEl      = $('s-missed');
+const sMissedCountEl = $('s-missed-count');
+const tooltipEl      = $('tooltip');
 
 // ── Gantt canvas ──────────────────────────────────────────────────────────────
 watchGanttSize(ganttCanvas);
@@ -55,6 +58,39 @@ function makeTaskEl(t, extraClass = '') {
     ? ` <span class="mlfq-level-tag">Q${t.level}</span>`
     : '';
 
+  // Meta lines vary by algorithm
+  let metaLine1, metaLine2, metaLine3;
+  if (currentAlgo === 'EDF') {
+    // EDF: left/wait + deadline (no idle line — deadline is the relevant urgency signal)
+    metaLine1 = isCurrent
+      ? `Left  ${t.remainingTime.toFixed(1)} s`
+      : `Wait  ${t.waitTime.toFixed(1)} s`;
+    if (t._deadlineMissed) {
+      const overdue = Math.max(0, sched.simTime - t.deadline).toFixed(1);
+      const tip = `截止時間：${t.deadline.toFixed(1)} s\n已逾期 ${overdue} s`;
+      metaLine2 = `<span style="color:var(--nord11);font-weight:700" data-tooltip="${tip}">MISSED</span>`;
+    } else {
+      metaLine2 = `DL: ${t.deadline.toFixed(1)} s`;
+    }
+    metaLine3 = '';
+  } else {
+    metaLine1 = `Burst ${t.burstTime.toFixed(1)} s`;
+    if (isCurrent) {
+      metaLine2 = `Left  ${t.remainingTime.toFixed(1)} s`;
+      metaLine3 = '';
+    } else if (currentAlgo === 'HRRN') {
+      const r = (t.waitTime + t.burstTime) / t.burstTime;
+      metaLine2 = `R: ${r.toFixed(2)}`;
+      metaLine3 = `Idle  ${t.idleTime.toFixed(1)} s`;
+    } else if (currentAlgo === 'Lottery') {
+      metaLine2 = `🎟 ${t.tickets}`;
+      metaLine3 = `Idle  ${t.idleTime.toFixed(1)} s`;
+    } else {
+      metaLine2 = `Wait  ${t.waitTime.toFixed(1)} s`;
+      metaLine3 = `Idle  ${t.idleTime.toFixed(1)} s`;
+    }
+  }
+
   const div = document.createElement('div');
   div.className = ('task-block ' + extraClass).trim();
   div.style.backgroundColor = t.color;
@@ -63,12 +99,13 @@ function makeTaskEl(t, extraClass = '') {
     `${priorityBadge}` +
     `<div class="task-id">${isCurrent ? '▶ ' : ''}T${t.id}${levelTag}</div>` +
     `<div class="task-meta">` +
-      `<span>Burst ${t.burstTime.toFixed(1)} s</span>` +
-      `<span>${isCurrent
-        ? 'Left  ' + t.remainingTime.toFixed(1) + ' s'
-        : 'Wait  ' + t.waitTime.toFixed(1) + ' s'}</span>` +
+      `<span>${metaLine1}</span>` +
+      `<span>${metaLine2}</span>` +
+      (metaLine3 ? `<span>${metaLine3}</span>` : '') +
     `</div>` +
-    (isStarving ? `<span class="starve-icon" title="Waiting too long">!</span>` : '');
+    (isStarving && currentAlgo !== 'EDF'
+      ? `<span class="starve-icon" data-tooltip="上次執行後空閒 ${t.idleTime.toFixed(1)} s\n飢餓警戒線：${STARVATION_LIMIT} s">!</span>`
+      : '');
   return div;
 }
 
@@ -104,12 +141,17 @@ function renderQueue() {
       if (tasks.length === 0) continue;
       appendQueueHeader(MLFQ_LABELS[lvl]);
       for (const t of tasks) {
-        queueListEl.appendChild(makeTaskEl(t, t.waitTime >= STARVATION_LIMIT ? 'starving' : ''));
+        queueListEl.appendChild(makeTaskEl(t, t.idleTime >= STARVATION_LIMIT ? 'starving' : ''));
       }
     }
   } else {
     for (const t of sched.readyQueue) {
-      const extra = t.waitTime >= STARVATION_LIMIT ? 'starving' : '';
+      let extra = '';
+      if (currentAlgo === 'EDF') {
+        extra = t._deadlineMissed ? 'deadline-missed' : '';
+      } else {
+        extra = t.idleTime >= STARVATION_LIMIT ? 'starving' : '';
+      }
       queueListEl.appendChild(makeTaskEl(t, extra));
     }
   }
@@ -161,6 +203,10 @@ function renderStats() {
   }
   sUtil.textContent = simTime > 0 ? `${(busyTime / simTime * 100).toFixed(0)}%` : '—';
   sTput.textContent = simTime > 0 ? `${(completedTasks.length / simTime).toFixed(2)}/s` : '—';
+
+  const missed = sched.missedDeadlines;
+  sMissedEl.hidden = missed == null;
+  if (missed != null) sMissedCountEl.textContent = missed;
 
   if (!paused && !atLimit) {
     factoryIconEl.classList.add('spinning');
@@ -218,6 +264,18 @@ window.addEventListener('mouseup', () => {
   if (!ganttDragStart) return;
   ganttDragStart = null;
   ganttCanvas.style.cursor = ganttViewEnd === null ? 'default' : 'grab';
+});
+
+// ── Global tooltip ────────────────────────────────────────────────────────────
+document.addEventListener('mousemove', (e) => {
+  const el = /** @type {Element|null} */ (document.elementFromPoint(e.clientX, e.clientY))
+    ?.closest('[data-tooltip]');
+  tooltipEl.hidden = !el;
+  if (el) {
+    tooltipEl.textContent = /** @type {HTMLElement} */ (el).dataset.tooltip ?? '';
+    tooltipEl.style.left = `${Math.min(e.clientX + 14, window.innerWidth - 250)}px`;
+    tooltipEl.style.top  = `${Math.max(4, e.clientY - 40)}px`;
+  }
 });
 
 // ── Animation loop ────────────────────────────────────────────────────────────
@@ -392,6 +450,40 @@ const MODAL = {
 <p><strong>飢餓問題</strong>——低優先權任務（P4、P5）可能永遠等不到 CPU。經典解法是 <em>老化（Aging）</em>：等待越久則自動調高優先權。</p>
     `,
   },
+  HRRN: {
+    en: `
+<p><strong>HRRN — Highest Response Ratio Next</strong></p>
+<p>Each time the CPU becomes free, compute the response ratio for every waiting task:</p>
+<p>$$R_i = \\frac{W_i + B_i}{B_i}$$</p>
+<p>where $W_i$ is accumulated wait time and $B_i$ is burst time. The task with the highest $R_i$ runs next.</p>
+<p>When $W_i = 0$, $R_i = 1$ — pure SJF ordering. As a task waits longer its $R_i$ grows, so long tasks eventually win. <strong>Starvation is impossible.</strong></p>
+<p>The live $R$ value is shown on each waiting task card so you can see why the scheduler picks its next victim.</p>
+    `,
+    zhTW: `
+<p><strong>HRRN — 最高反應比優先</strong></p>
+<p>每次 CPU 空閒時，計算佇列中每個任務的反應比：</p>
+<p>$$R_i = \\frac{W_i + B_i}{B_i}$$</p>
+<p>其中 $W_i$ 為已等待時間，$B_i$ 為執行時間。選取 $R_i$ 最高者執行。</p>
+<p>當 $W_i = 0$ 時 $R_i = 1$，此時等同 SJF 排序。隨著等待時間增加，$R_i$ 持續上升，長任務最終必然獲得 CPU，<strong>不會發生飢餓</strong>。</p>
+<p>每張等待中的任務卡上會即時顯示 $R$ 值，可直觀看出下一個被選中的原因。</p>
+    `,
+  },
+  Lottery: {
+    en: `
+<p><strong>Lottery Scheduling</strong></p>
+<p>Each task holds $k_i$ tickets. At each dispatch, one ticket is drawn at random:</p>
+<p>$$P(\\text{task } i \\text{ wins}) = \\frac{k_i}{\\displaystyle\\sum_j k_j}$$</p>
+<p>In this simulation each task is assigned 1–10 tickets randomly (shown on its card as 🎟). Transferring tickets between tasks lets you express proportional resource shares without strict determinism.</p>
+<p><strong>Trade-off</strong> — the distribution converges to the ticket ratio over time, but short-run variance can cause jitter. A task with zero tickets never runs; otherwise starvation is probabilistically impossible.</p>
+    `,
+    zhTW: `
+<p><strong>彩票排程</strong></p>
+<p>每個任務持有 $k_i$ 張彩票。每次排程時隨機抽一張：</p>
+<p>$$P(\\text{任務 } i \\text{ 中獎}) = \\frac{k_i}{\\displaystyle\\sum_j k_j}$$</p>
+<p>本模擬中每個任務隨機分配 1–10 張彩票（顯示在任務卡的 🎟 圖示旁）。透過增減彩票可以直覺地表達比例化的資源分配。</p>
+<p><strong>取捨</strong>——長期而言資源分配趨近彩票比例，但短期內有隨機波動。彩票為零的任務永遠不會執行；否則飢餓的機率趨近於零。</p>
+    `,
+  },
   MLFQ: {
     en: `
 <p><strong>MLFQ — Multi-Level Feedback Queue</strong></p>
@@ -416,6 +508,24 @@ const MODAL = {
   <tr><td style="padding:2px 6px">Q2</td><td style="padding:2px 6px">∞</td><td style="padding:2px 6px">FCFS</td></tr>
 </table>
 <p>排程器永遠從最高層非空佇列取任務。短任務／互動型任務停在 Q0 享有快速響應；CPU 密集型任務沉降至 Q2 以減少切換開銷——無需預先知道執行時間。</p>
+    `,
+  },
+  EDF: {
+    en: `
+<p><strong>EDF — Earliest Deadline First (preemptive)</strong></p>
+<p>Each task has an absolute deadline $d_i$ assigned at arrival. The CPU always runs the task with the earliest deadline:</p>
+<p>$$\\text{next} = \\arg\\min_{i}\\, d_i$$</p>
+<p>EDF is preemptive: if a new task arrives with $d_j < d_{\\text{running}}$, it immediately takes the CPU.</p>
+<p>In this simulation $d_i = A_i + B_i \\cdot (1 + U[0,2])$, giving each task a slack window of 0–2× its burst time. The deadline is shown on every task card; tasks that miss it get a dashed red border and a <strong style="color:var(--nord11)">MISSED</strong> label.</p>
+<p><strong>Overload</strong> — once the system is overloaded ($\\sum B_i / (d_i - A_i) > 1$), EDF degrades ungracefully and a cascade of misses occurs. Watch the footer counter.</p>
+    `,
+    zhTW: `
+<p><strong>EDF — 最早截止日優先（搶佔式）</strong></p>
+<p>每個任務在抵達時被指定一個絕對截止時間 $d_i$。CPU 永遠執行截止時間最早的任務：</p>
+<p>$$\\text{next} = \\arg\\min_{i}\\, d_i$$</p>
+<p>EDF 為搶佔式：若新任務抵達且 $d_j < d_{\\text{running}}$，立即奪走 CPU。</p>
+<p>本模擬中 $d_i = A_i + B_i \\cdot (1 + U[0,2])$，即每個任務有 0–2 倍執行時間的寬裕。截止時間顯示在任務卡上；錯過截止日的任務會顯示紅色虛線邊框與 <strong style="color:var(--nord11)">MISSED</strong> 標籤。</p>
+<p><strong>過載</strong>——一旦系統超載（$\\sum B_i / (d_i - A_i) > 1$），EDF 會急劇惡化，引發連鎖截止失敗。可在頁面底部的計數器觀察。</p>
     `,
   },
 };

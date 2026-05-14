@@ -395,6 +395,30 @@
       margin-left: 2px;
       vertical-align: middle;
     }
+
+    /* ── EDF deadline-missed ─────────────────────────────── */
+    .task-block.deadline-missed {
+      border: 2px dashed var(--nord11) !important;
+      opacity: 0.78;
+    }
+
+    /* ── Global tooltip ──────────────────────────────────── */
+    #tooltip {
+      position: fixed;
+      z-index: 200;
+      background: var(--nord0);
+      color: var(--nord6);
+      border: 1px solid var(--nord3);
+      border-radius: 5px;
+      padding: 4px 9px;
+      font-size: 0.72rem;
+      line-height: 1.45;
+      pointer-events: none;
+      max-width: 240px;
+      white-space: pre-wrap;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+    }
+    #tooltip[hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -409,9 +433,9 @@
       <option value="SRTF">SRTF</option>
       <option value="Priority">Priority</option>
       <option value="MLFQ">MLFQ</option>
-      <option value="HRRN"     disabled>HRRN (phase 4)</option>
-      <option value="Lottery"  disabled>Lottery (phase 4)</option>
-      <option value="EDF"      disabled>EDF (phase 4)</option>
+      <option value="HRRN">HRRN</option>
+      <option value="Lottery">Lottery</option>
+      <option value="EDF">EDF</option>
     </select>
   </label>
 
@@ -489,6 +513,7 @@
   <span>Avg Wait: <b id="s-wait">—</b></span>
   <span>CPU Util: <b id="s-util">—</b></span>
   <span>Throughput: <b id="s-tput">—</b></span>
+  <span id="s-missed" hidden>Missed DL: <b id="s-missed-count">0</b></span>
 </footer>
 
 <div id="math-modal" role="dialog" aria-modal="true" hidden>
@@ -504,6 +529,7 @@
   </div>
 </div>
 
+<div id="tooltip" hidden></div>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

@@ -25,6 +25,10 @@ export class Task {
     this.color = TASK_COLORS[(id - 1) % TASK_COLORS.length];
     this.priority = Math.ceil(Math.random() * 5); // 1 = highest, 5 = lowest
     this.level = 0;                                // MLFQ queue level (0–2)
+    this.idleTime = 0;                             // time in queue since last CPU dispatch
+    this.deadline = +(simTime + this.burstTime * (1 + Math.random() * 2)).toFixed(1); // EDF
+    this.tickets  = Math.ceil(Math.random() * 10);  // Lottery
+    this._deadlineMissed = false;
   }
 }
 
@@ -67,14 +71,15 @@ export class BaseScheduler {
   }
 
   _accrueWait(dt) {
-    for (const t of this.readyQueue) t.waitTime += dt;
+    for (const t of this.readyQueue) { t.waitTime += dt; t.idleTime += dt; }
   }
 
   /** Give the CPU to a task and record when the segment started. */
   _assignCPU(task) {
-    this.currentTask = task;
-    this._segStart   = this.simTime;
+    this.currentTask  = task;
+    this._segStart    = this.simTime;
     this.contextSwitches++;
+    task.idleTime     = 0; // reset: not starving while on CPU
   }
 
   /**
@@ -283,10 +288,95 @@ export class MLFQScheduler extends BaseScheduler {
   }
 }
 
+// ── HRRN (Highest Response Ratio Next — non-preemptive) ──────────────────────
+
+export class HRRNScheduler extends BaseScheduler {
+  /** Pick task with highest R = (W + B) / B. */
+  _dispatch() {
+    if (this.currentTask || this.readyQueue.length === 0) return;
+    let bestIdx = 0;
+    let bestR   = -Infinity;
+    for (let i = 0; i < this.readyQueue.length; i++) {
+      const t = this.readyQueue[i];
+      const r = (t.waitTime + t.burstTime) / t.burstTime;
+      if (r > bestR) { bestR = r; bestIdx = i; }
+    }
+    this._assignCPU(this.readyQueue.splice(bestIdx, 1)[0]);
+  }
+}
+
+// ── Lottery ───────────────────────────────────────────────────────────────────
+
+export class LotteryScheduler extends BaseScheduler {
+  /** Draw a winning ticket proportional to each task's ticket count. */
+  _dispatch() {
+    if (this.currentTask || this.readyQueue.length === 0) return;
+    const total = this.readyQueue.reduce((s, t) => s + t.tickets, 0);
+    let winning = Math.random() * total;
+    let idx = this.readyQueue.length - 1;
+    for (let i = 0; i < this.readyQueue.length; i++) {
+      winning -= this.readyQueue[i].tickets;
+      if (winning <= 0) { idx = i; break; }
+    }
+    this._assignCPU(this.readyQueue.splice(idx, 1)[0]);
+  }
+}
+
+// ── EDF (Earliest Deadline First — preemptive) ────────────────────────────────
+
+export class EDFScheduler extends BaseScheduler {
+  constructor() {
+    super();
+    this.missedDeadlines = 0;
+  }
+
+  tick(dt) {
+    this.simTime += dt;
+    this._runProducer(dt);
+    this._accrueWait(dt);
+    this._execute(dt);
+    this._checkDeadlines();
+    this._preemptCheck();
+    this._dispatch();
+  }
+
+  _checkDeadlines() {
+    const all = this.currentTask
+      ? [...this.readyQueue, this.currentTask]
+      : this.readyQueue;
+    for (const t of all) {
+      if (!t._deadlineMissed && this.simTime > t.deadline) {
+        t._deadlineMissed = true;
+        this.missedDeadlines++;
+      }
+    }
+  }
+
+  _preemptCheck() {
+    if (!this.currentTask || this.readyQueue.length === 0) return;
+    const minDeadline = this.readyQueue.reduce((m, t) => Math.min(m, t.deadline), Infinity);
+    if (minDeadline < this.currentTask.deadline) {
+      const task = this.currentTask;
+      this._evictCPU();
+      this.readyQueue.push(task);
+      this.contextSwitches++;
+    }
+  }
+
+  _dispatch() {
+    if (this.currentTask || this.readyQueue.length === 0) return;
+    let minIdx = 0;
+    for (let i = 1; i < this.readyQueue.length; i++) {
+      if (this.readyQueue[i].deadline < this.readyQueue[minIdx].deadline) minIdx = i;
+    }
+    this._assignCPU(this.readyQueue.splice(minIdx, 1)[0]);
+  }
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 /**
- * @param {'FCFS'|'SJF'|'RR'|'SRTF'|'Priority'|'MLFQ'} algo
+ * @param {'FCFS'|'SJF'|'RR'|'SRTF'|'Priority'|'MLFQ'|'HRRN'|'Lottery'|'EDF'} algo
  * @param {{ arrivalRate?: number, timeQuantum?: number }} opts
  * @returns {BaseScheduler}
  */
@@ -298,6 +388,9 @@ export function createScheduler(algo, opts = {}) {
     case 'SRTF':     s = new SRTFScheduler();      break;
     case 'Priority': s = new PriorityScheduler();  break;
     case 'MLFQ':     s = new MLFQScheduler();      break;
+    case 'HRRN':     s = new HRRNScheduler();      break;
+    case 'Lottery':  s = new LotteryScheduler();   break;
+    case 'EDF':      s = new EDFScheduler();       break;
     default:         s = new FCFSScheduler();       break;
   }
   if (opts.arrivalRate != null) s.arrivalRate = opts.arrivalRate;
