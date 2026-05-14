@@ -10,6 +10,7 @@ export const TASK_COLORS = [
 ];
 
 export const STARVATION_LIMIT = 15; // sim-seconds
+export const MAX_TASKS = 12;       // producer hard stop
 
 // ── Task model ────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,7 @@ export class BaseScheduler {
     this.simTime   = 0;
     this.busyTime  = 0;
     this.nextId    = 1;
+    this.taskCap   = MAX_TASKS; // producer stops here; can be raised via spawn
     this._prodAccum = 0;
     this.arrivalRate = 1; // tasks / sim-second
     /** @type {{ taskId:number, color:string, start:number, end:number }[]} */
@@ -53,9 +55,10 @@ export class BaseScheduler {
   }
 
   _runProducer(dt) {
+    if (this.nextId > this.taskCap) return;
     this._prodAccum += dt;
     const interval = 1 / this.arrivalRate;
-    while (this._prodAccum >= interval) {
+    while (this._prodAccum >= interval && this.nextId <= this.taskCap) {
       this._prodAccum -= interval;
       this.readyQueue.push(new Task(this.nextId++, this.simTime));
     }

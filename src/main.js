@@ -1,12 +1,14 @@
-import { createScheduler, RRScheduler, STARVATION_LIMIT } from './scheduler.js';
-import { renderGantt, watchGanttSize } from './gantt.js';
+import { createScheduler, RRScheduler, STARVATION_LIMIT, MAX_TASKS } from './scheduler.js';
+import { renderGantt, watchGanttSize, WINDOW_SECS } from './gantt.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let sched       = createScheduler('FCFS');
-let speed       = 1;
-let paused      = false;
-let lastTs      = /** @type {number|null} */ (null);
-let currentAlgo = 'FCFS';
+let sched          = createScheduler('FCFS');
+let speed          = 1;
+let paused         = false;
+let lastTs         = /** @type {number|null} */ (null);
+let currentAlgo    = 'FCFS';
+let ganttViewEnd   = /** @type {number|null} */ (null); // null = live (auto-follow)
+let ganttDragStart = /** @type {{ x:number, ve:number }|null} */ (null);
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
@@ -24,8 +26,11 @@ const sWait          = $('s-wait');
 const sUtil          = $('s-util');
 const sTput          = $('s-tput');
 const factoryIconEl  = $('factory-icon');
+const factoryLabelEl = $('factory-label');
 const factoryTotal   = $('factory-total');
-const ganttCanvas    = /** @type {HTMLCanvasElement} */ ($('gantt-canvas'));
+const btnSpawn       = $('btn-spawn');
+const ganttCanvas     = /** @type {HTMLCanvasElement} */ ($('gantt-canvas'));
+const btnGanttLive    = $('btn-gantt-live');
 const mathModal      = $('math-modal');
 const mathContent    = $('math-content');
 
@@ -33,21 +38,49 @@ const mathContent    = $('math-content');
 watchGanttSize(ganttCanvas);
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
+/** Build a task block element with progress overlay. */
+function makeTaskEl(t, extraClass = '') {
+  const isCurrent  = extraClass.includes('current');
+  const isStarving = extraClass.includes('starving');
+  const pct = ((t.burstTime - t.remainingTime) / t.burstTime * 100).toFixed(1);
+  const div = document.createElement('div');
+  div.className = ('task-block ' + extraClass).trim();
+  div.style.backgroundColor = t.color;
+  div.innerHTML =
+    `<div class="task-bar" style="width:${pct}%"></div>` +
+    `<div class="task-id">${isCurrent ? '▶ ' : ''}T${t.id}</div>` +
+    `<div class="task-meta">` +
+      `<span>Burst ${t.burstTime.toFixed(1)} s</span>` +
+      `<span>${isCurrent
+        ? 'Left  ' + t.remainingTime.toFixed(1) + ' s'
+        : 'Wait  ' + t.waitTime.toFixed(1) + ' s'}</span>` +
+    `</div>` +
+    (isStarving ? `<span class="starve-icon" title="Waiting too long">!</span>` : '');
+  return div;
+}
+
 function renderQueue() {
   queueListEl.innerHTML = '';
-  for (const t of sched.readyQueue) {
-    const div = document.createElement('div');
-    div.className = 'task-block' + (t.waitTime >= STARVATION_LIMIT ? ' starving' : '');
-    div.style.backgroundColor = t.color;
-    div.innerHTML =
-      `<div class="task-id">T${t.id}</div>` +
-      `<div class="task-meta">` +
-        `<span>Burst ${t.burstTime.toFixed(1)} s</span>` +
-        `<span>Wait  ${t.waitTime.toFixed(1)} s</span>` +
-      `</div>`;
-    queueListEl.appendChild(div);
+
+  // Currently executing task at the top, highlighted
+  if (sched.currentTask) {
+    queueListEl.appendChild(makeTaskEl(sched.currentTask, 'current'));
+
+    if (sched.readyQueue.length > 0) {
+      const sep = document.createElement('div');
+      sep.className = 'queue-divider';
+      queueListEl.appendChild(sep);
+    }
   }
-  queueCountEl.textContent = `(${sched.readyQueue.length})`;
+
+  // Waiting tasks
+  for (const t of sched.readyQueue) {
+    const extra = t.waitTime >= STARVATION_LIMIT ? 'starving' : '';
+    queueListEl.appendChild(makeTaskEl(t, extra));
+  }
+
+  const total = (sched.currentTask ? 1 : 0) + sched.readyQueue.length;
+  queueCountEl.textContent = `(${total})`;
 }
 
 function renderCPU() {
@@ -75,9 +108,15 @@ function renderCPU() {
 
 function renderStats() {
   const { completedTasks, simTime, busyTime, nextId } = sched;
-  sDone.textContent          = completedTasks.length;
-  simClockEl.textContent     = `T = ${simTime.toFixed(1)} s`;
-  factoryTotal.textContent   = `Generated: ${nextId - 1}`;
+  const generated = nextId - 1;
+  const atLimit   = generated >= MAX_TASKS;
+
+  sDone.textContent         = completedTasks.length;
+  simClockEl.textContent    = `T = ${simTime.toFixed(1)} s`;
+  factoryTotal.textContent  = `${generated} / ${MAX_TASKS}`;
+  factoryLabelEl.textContent = atLimit ? 'Stopped' : 'Running';
+  factoryLabelEl.style.color = atLimit ? 'var(--nord11)' : 'var(--nord14)';
+  btnSpawn.hidden = !atLimit;
 
   if (completedTasks.length > 0) {
     const totalWait = completedTasks.reduce((s, t) => s + t.waitTime, 0);
@@ -88,7 +127,7 @@ function renderStats() {
   sUtil.textContent = simTime > 0 ? `${(busyTime / simTime * 100).toFixed(0)}%` : '—';
   sTput.textContent = simTime > 0 ? `${(completedTasks.length / simTime).toFixed(2)}/s` : '—';
 
-  if (!paused) {
+  if (!paused && !atLimit) {
     factoryIconEl.classList.add('spinning');
     factoryIconEl.style.animationDuration = `${Math.max(0.2, 1 / speed).toFixed(2)}s`;
   } else {
@@ -100,8 +139,51 @@ function updateUI() {
   renderQueue();
   renderCPU();
   renderStats();
-  renderGantt(ganttCanvas, sched);
+  const ve = ganttViewEnd ?? sched.simTime;
+  renderGantt(ganttCanvas, sched, ve);
 }
+
+// ── Gantt scroll / drag ───────────────────────────────────────────────────────
+
+function clampGanttView(ve) {
+  return Math.max(1, Math.min(ve, sched.simTime));
+}
+
+function setGanttView(ve) {
+  const clamped = clampGanttView(ve);
+  const isLive  = Math.abs(clamped - sched.simTime) < 0.1;
+  ganttViewEnd  = isLive ? null : clamped;
+  btnGanttLive.hidden = ganttViewEnd === null;
+  ganttCanvas.style.cursor = ganttViewEnd === null ? 'default' : 'grab';
+}
+
+// Mouse wheel: scroll left = earlier history, scroll right = toward live
+ganttCanvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const simPerPx = WINDOW_SECS / ganttCanvas.width;
+  const delta    = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+  const current  = ganttViewEnd ?? sched.simTime;
+  setGanttView(current - delta * simPerPx);
+}, { passive: false });
+
+// Drag-to-pan
+ganttCanvas.addEventListener('mousedown', (e) => {
+  ganttDragStart = { x: e.clientX, ve: ganttViewEnd ?? sched.simTime };
+  ganttCanvas.style.cursor = 'grabbing';
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!ganttDragStart) return;
+  const dx       = e.clientX - ganttDragStart.x;
+  const simPerPx = WINDOW_SECS / ganttCanvas.width;
+  setGanttView(ganttDragStart.ve - dx * simPerPx); // drag right = see earlier
+});
+
+window.addEventListener('mouseup', () => {
+  if (!ganttDragStart) return;
+  ganttDragStart = null;
+  ganttCanvas.style.cursor = ganttViewEnd === null ? 'default' : 'grab';
+});
 
 // ── Animation loop ────────────────────────────────────────────────────────────
 function loop(now) {
@@ -112,6 +194,16 @@ function loop(now) {
   if (!paused) sched.tick(realDt * speed);
   updateUI();
 }
+
+btnSpawn.addEventListener('click', () => {
+  sched.taskCap += MAX_TASKS;
+});
+
+btnGanttLive.addEventListener('click', () => {
+  ganttViewEnd = null;
+  btnGanttLive.hidden = true;
+  ganttCanvas.style.cursor = 'default';
+});
 
 // ── Algorithm switching ───────────────────────────────────────────────────────
 function switchAlgo(algo) {
@@ -165,6 +257,8 @@ $('quantum-slider').addEventListener('input', (e) => {
 
 $('btn-reset').addEventListener('click', () => {
   switchAlgo(currentAlgo); // recreates scheduler, preserving rate/quantum
+  ganttViewEnd = null;
+  btnGanttLive.hidden = true;
   paused = false;
   /** @type {HTMLButtonElement} */ ($('btn-pause')).textContent = 'Pause';
   updateUI();
