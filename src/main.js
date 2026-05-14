@@ -29,6 +29,11 @@ const factoryIconEl  = $('factory-icon');
 const factoryLabelEl = $('factory-label');
 const factoryTotal   = $('factory-total');
 const btnSpawn       = $('btn-spawn');
+const btnProdOne     = $('btn-prod-one');
+const btnProdAuto    = $('btn-prod-auto');
+const btnProdStop    = $('btn-prod-stop');
+const intervalSlider = /** @type {HTMLInputElement} */ ($('interval-slider'));
+const intervalVal    = $('interval-val');
 const ganttCanvas     = /** @type {HTMLCanvasElement} */ ($('gantt-canvas'));
 const btnGanttLive    = $('btn-gantt-live');
 const mathModal      = $('math-modal');
@@ -191,9 +196,19 @@ function renderStats() {
   sDone.textContent         = completedTasks.length;
   simClockEl.textContent    = `T = ${simTime.toFixed(1)} s`;
   factoryTotal.textContent  = `${generated} / ${MAX_TASKS}`;
-  factoryLabelEl.textContent = atLimit ? 'Stopped' : 'Running';
-  factoryLabelEl.style.color = atLimit ? 'var(--nord11)' : 'var(--nord14)';
   btnSpawn.hidden = !atLimit;
+  btnProdOne.disabled = atLimit;
+
+  if (atLimit) {
+    factoryLabelEl.textContent = 'Completed';
+    factoryLabelEl.style.color = 'var(--nord11)';
+  } else if (sched.producerStopped) {
+    factoryLabelEl.textContent = 'Paused';
+    factoryLabelEl.style.color = 'var(--nord13)';
+  } else {
+    factoryLabelEl.textContent = 'Running';
+    factoryLabelEl.style.color = 'var(--nord14)';
+  }
 
   if (completedTasks.length > 0) {
     const totalWait = completedTasks.reduce((s, t) => s + t.waitTime, 0);
@@ -208,7 +223,7 @@ function renderStats() {
   sMissedEl.hidden = missed == null;
   if (missed != null) sMissedCountEl.textContent = missed;
 
-  if (!paused && !atLimit) {
+  if (!paused && !atLimit && !sched.producerStopped) {
     factoryIconEl.classList.add('spinning');
     factoryIconEl.style.animationDuration = `${Math.max(0.2, 1 / speed).toFixed(2)}s`;
   } else {
@@ -299,6 +314,12 @@ btnGanttLive.addEventListener('click', () => {
 });
 
 // ── Algorithm switching ───────────────────────────────────────────────────────
+function syncIntervalDisplay() {
+  const interval = 1 / sched.arrivalRate;
+  intervalSlider.value = String(Math.min(5, Math.max(0.3, interval)));
+  intervalVal.textContent = `${interval.toFixed(1)} s`;
+}
+
 function switchAlgo(algo) {
   currentAlgo = algo;
   const opts = {
@@ -313,6 +334,10 @@ function switchAlgo(algo) {
   btnGanttLive.hidden = true;
   ganttCanvas.style.cursor = 'default';
   $('quantum-group').hidden = algo !== 'RR';
+  // Reset producer buttons to Auto
+  btnProdAuto.classList.add('active');
+  btnProdStop.classList.remove('active');
+  syncIntervalDisplay();
 }
 
 // ── Controls ──────────────────────────────────────────────────────────────────
@@ -339,10 +364,27 @@ document.querySelectorAll('.speed-btn').forEach((btn) => {
   });
 });
 
-$('arrival-slider').addEventListener('input', (e) => {
-  const v = parseFloat(/** @type {HTMLInputElement} */ (e.target).value);
-  sched.arrivalRate = v;
-  $('arrival-val').textContent = `${v.toFixed(1)}/s`;
+intervalSlider.addEventListener('input', () => {
+  const interval = parseFloat(intervalSlider.value);
+  sched.arrivalRate = 1 / interval;
+  intervalVal.textContent = `${interval.toFixed(1)} s`;
+});
+
+btnProdOne.addEventListener('click', () => {
+  sched.spawnOne();
+  updateUI();
+});
+
+btnProdAuto.addEventListener('click', () => {
+  sched.producerStopped = false;
+  btnProdAuto.classList.add('active');
+  btnProdStop.classList.remove('active');
+});
+
+btnProdStop.addEventListener('click', () => {
+  sched.producerStopped = true;
+  btnProdStop.classList.add('active');
+  btnProdAuto.classList.remove('active');
 });
 
 $('quantum-slider').addEventListener('input', (e) => {
@@ -359,6 +401,9 @@ $('btn-reset').addEventListener('click', () => {
   /** @type {HTMLButtonElement} */ ($('btn-pause')).textContent = 'Pause';
   updateUI();
 });
+
+// Sync interval display once on load
+syncIntervalDisplay();
 
 // ── Math modal ────────────────────────────────────────────────────────────────
 let modalLang = 'en';

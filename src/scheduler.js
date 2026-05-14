@@ -44,8 +44,9 @@ export class BaseScheduler {
     this.busyTime  = 0;
     this.nextId    = 1;
     this.taskCap   = MAX_TASKS; // producer stops here; can be raised via spawn
-    this._prodAccum = 0;
-    this.arrivalRate = 1; // tasks / sim-second
+    this._prodAccum      = 0;
+    this.arrivalRate     = 1;     // tasks / sim-second
+    this.producerStopped = false; // manual pause from UI
     /** @type {{ taskId:number, color:string, start:number, end:number }[]} */
     this.ganttLog  = [];
     this._segStart = /** @type {number|null} */ (null);
@@ -61,13 +62,19 @@ export class BaseScheduler {
   }
 
   _runProducer(dt) {
-    if (this.nextId > this.taskCap) return;
+    if (this.nextId > this.taskCap || this.producerStopped) return;
     this._prodAccum += dt;
     const interval = 1 / this.arrivalRate;
     while (this._prodAccum >= interval && this.nextId <= this.taskCap) {
       this._prodAccum -= interval;
       this.readyQueue.push(new Task(this.nextId++, this.simTime));
     }
+  }
+
+  /** Immediately emit one task, ignoring producerStopped but respecting taskCap. */
+  spawnOne() {
+    if (this.nextId > this.taskCap) return;
+    this.readyQueue.push(new Task(this.nextId++, this.simTime));
   }
 
   _accrueWait(dt) {

@@ -122,6 +122,49 @@
     #factory-label { font-size:0.72rem; color:var(--nord14); }
     #factory-total { font-size:0.72rem; color:var(--nord4); }
 
+    /* ── Producer controls ───────────────────────────────── */
+    #prod-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      padding: 0.6rem 0.75rem 0.3rem;
+      width: 100%;
+      border-top: 1px solid var(--nord2);
+      margin-top: 0.5rem;
+    }
+
+    .prod-row {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.68rem;
+    }
+
+    .prod-label {
+      color: var(--nord9);
+      font-size: 0.65rem;
+      min-width: 2.8rem;
+      flex-shrink: 0;
+    }
+
+    .prod-row input[type=range] { flex: 1; min-width: 0; }
+
+    .prod-val { color: var(--nord4); min-width: 2.4rem; text-align: right; flex-shrink: 0; }
+
+    .prod-btns { gap: 0.25rem; }
+    .prod-btns button {
+      flex: 1;
+      font-size: 0.66rem;
+      padding: 0.22rem 0.2rem;
+      min-width: 0;
+    }
+    .prod-btns button.active {
+      background: var(--nord10);
+      border-color: var(--nord9);
+    }
+    #btn-prod-one { background: var(--nord2); }
+    #btn-prod-one:disabled { opacity: 0.4; cursor: not-allowed; }
+
     /* ── Ready Queue ─────────────────────────────────────── */
     #queue-list {
       flex: 1;
@@ -449,12 +492,6 @@
     <button class="speed-btn" data-spd="4">4×</button>
   </div>
 
-  <label>
-    Arrival Rate
-    <input type="range" id="arrival-slider" min="0.2" max="3" step="0.1" value="1" />
-    <span id="arrival-val">1.0/s</span>
-  </label>
-
   <div id="quantum-group" hidden>
     <label>
       Quantum
@@ -478,6 +515,19 @@
       <div id="factory-label">Running</div>
       <div id="factory-total">0 / 12</div>
       <button id="btn-spawn" hidden>＋ Spawn</button>
+    </div>
+
+    <div id="prod-controls">
+      <div class="prod-row">
+        <span class="prod-label">Interval</span>
+        <input type="range" id="interval-slider" min="0.3" max="5" step="0.1" value="1" />
+        <span id="interval-val" class="prod-val">1.0 s</span>
+      </div>
+      <div class="prod-row prod-btns">
+        <button id="btn-prod-one" title="Spawn one task now">＋1</button>
+        <button id="btn-prod-auto" class="active" title="Auto generate">▶ Auto</button>
+        <button id="btn-prod-stop" title="Stop auto generate">■ Stop</button>
+      </div>
     </div>
   </section>
 
