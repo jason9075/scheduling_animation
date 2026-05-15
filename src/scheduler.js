@@ -25,8 +25,9 @@ export class Task {
     this.color = TASK_COLORS[(id - 1) % TASK_COLORS.length];
     this.priority = Math.ceil(Math.random() * 5); // 1 = highest, 5 = lowest
     this.level = 0;                                // MLFQ queue level (0–2)
-    this.idleTime    = 0; // time in queue since last CPU dispatch
-    this.maxIdleTime = 0; // peak idleTime ever recorded (for log)
+    this.idleTime        = 0; // time in queue since last CPU dispatch
+    this.maxIdleTime     = 0; // peak idleTime ever recorded (for log)
+    this.preemptions     = 0; // how many times evicted before completing
     this.deadline = +(simTime + this.burstTime * (1 + Math.random() * 2)).toFixed(1); // EDF
     this.tickets  = Math.ceil(Math.random() * 10);  // Lottery
     this._deadlineMissed = false;
@@ -105,7 +106,7 @@ export class BaseScheduler {
    * Remove the current task from the CPU and log the completed segment.
    * The caller is responsible for pushing the task to the queue or completed list.
    */
-  _evictCPU() {
+  _evictCPU(isPreemption = false) {
     if (this.currentTask && this._segStart !== null) {
       this.ganttLog.push({
         taskId: this.currentTask.id,
@@ -113,6 +114,7 @@ export class BaseScheduler {
         start:  this._segStart,
         end:    this.simTime,
       });
+      if (isPreemption) this.currentTask.preemptions++;
     }
     this.currentTask = null;
     this._segStart   = null;
@@ -136,6 +138,7 @@ export class BaseScheduler {
         totalWait:   done.waitTime,
         maxIdle:     done.maxIdleTime,
         burstTime:   done.burstTime,
+        preemptions: done.preemptions,
       });
       this._onTaskComplete(done);
     }
@@ -192,7 +195,7 @@ export class RRScheduler extends BaseScheduler {
     this._quantumAccum += dt;
     if (this._quantumAccum >= this.timeQuantum) {
       const preempted = this.currentTask;
-      this._evictCPU();
+      this._evictCPU(true);
       this.readyQueue.push(preempted); // back to end of queue
       this.contextSwitches++;
       this._quantumAccum = 0;
@@ -224,7 +227,7 @@ export class SRTFScheduler extends BaseScheduler {
     }
     if (minRemaining < this.currentTask.remainingTime) {
       const task = this.currentTask;
-      this._evictCPU();
+      this._evictCPU(true);
       this.readyQueue.push(task);
       this.contextSwitches++;
     }
@@ -292,7 +295,7 @@ export class MLFQScheduler extends BaseScheduler {
     this._quantumAccum += dt;
     if (this._quantumAccum >= q) {
       const task = this.currentTask;
-      this._evictCPU();
+      this._evictCPU(true);
       task.level = Math.min(task.level + 1, 2); // demote one level
       this.readyQueue.push(task);
       this.contextSwitches++;
@@ -386,7 +389,7 @@ export class EDFScheduler extends BaseScheduler {
     const minDeadline = this.readyQueue.reduce((m, t) => Math.min(m, t.deadline), Infinity);
     if (minDeadline < this.currentTask.deadline) {
       const task = this.currentTask;
-      this._evictCPU();
+      this._evictCPU(true);
       this.readyQueue.push(task);
       this.contextSwitches++;
     }

@@ -43,6 +43,7 @@ const logSummary     = $('log-summary');
 const logContent     = $('log-content');
 const sMissedEl      = $('s-missed');
 const sMissedCountEl = $('s-missed-count');
+const sMaxIdleEl     = $('s-max-idle');
 const tooltipEl      = $('tooltip');
 
 // ── Gantt canvas ──────────────────────────────────────────────────────────────
@@ -216,6 +217,13 @@ function renderStats() {
   sUtil.textContent = simTime > 0 ? `${(busyTime / simTime * 100).toFixed(0)}%` : '—';
   sTput.textContent = simTime > 0 ? `${(completedTasks.length / simTime).toFixed(2)}/s` : '—';
 
+  const allLive = sched.currentTask
+    ? [...sched.readyQueue, sched.currentTask]
+    : sched.readyQueue;
+  const maxIdle = allLive.length > 0 ? Math.max(...allLive.map((t) => t.idleTime)) : 0;
+  sMaxIdleEl.textContent      = allLive.length > 0 ? `${maxIdle.toFixed(1)} s` : '—';
+  sMaxIdleEl.style.color      = maxIdle >= STARVATION_LIMIT ? 'var(--nord11)' : 'var(--nord13)';
+
   const missed = sched.missedDeadlines;
   sMissedEl.hidden = missed == null;
   if (missed != null) sMissedCountEl.textContent = missed;
@@ -251,6 +259,7 @@ function renderLog() {
   // Table rows (newest first)
   const rows = [...entries].reverse().map((e) => {
     const idleClass = e.maxIdle >= STARVATION_LIMIT ? ' class="log-warn"' : '';
+    const ctxClass  = e.preemptions > 0 ? ' style="color:var(--nord13)"' : '';
     return `<tr>
       <td><span class="task-chip" style="background:${e.color}">T${e.id}</span></td>
       <td>${e.arrivedAt.toFixed(1)} s</td>
@@ -259,6 +268,7 @@ function renderLog() {
       <td>${e.burstTime.toFixed(1)} s</td>
       <td>${e.totalWait.toFixed(1)} s</td>
       <td${idleClass}>${e.maxIdle.toFixed(1)} s</td>
+      <td${ctxClass}>${e.preemptions}</td>
     </tr>`;
   }).join('');
 
@@ -272,6 +282,7 @@ function renderLog() {
         <th>Burst</th>
         <th>Total Wait</th>
         <th>Max Idle</th>
+        <th>Preemptions</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
