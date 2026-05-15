@@ -38,6 +38,9 @@ const ganttCanvas     = /** @type {HTMLCanvasElement} */ ($('gantt-canvas'));
 const btnGanttLive    = $('btn-gantt-live');
 const mathModal      = $('math-modal');
 const mathContent    = $('math-content');
+const logModal       = $('log-modal');
+const logSummary     = $('log-summary');
+const logContent     = $('log-content');
 const sMissedEl      = $('s-missed');
 const sMissedCountEl = $('s-missed-count');
 const tooltipEl      = $('tooltip');
@@ -64,7 +67,7 @@ function makeTaskEl(t, extraClass = '') {
     : '';
 
   // Meta lines vary by algorithm
-  let metaLine1, metaLine2, metaLine3;
+  let metaLine1, metaLine2;
   if (currentAlgo === 'EDF') {
     // EDF: left/wait + deadline (no idle line — deadline is the relevant urgency signal)
     metaLine1 = isCurrent
@@ -77,22 +80,17 @@ function makeTaskEl(t, extraClass = '') {
     } else {
       metaLine2 = `DL: ${t.deadline.toFixed(1)} s`;
     }
-    metaLine3 = '';
   } else {
     metaLine1 = `Burst ${t.burstTime.toFixed(1)} s`;
     if (isCurrent) {
       metaLine2 = `Left  ${t.remainingTime.toFixed(1)} s`;
-      metaLine3 = '';
     } else if (currentAlgo === 'HRRN') {
       const r = (t.waitTime + t.burstTime) / t.burstTime;
-      metaLine2 = `R: ${r.toFixed(2)}`;
-      metaLine3 = `Idle  ${t.idleTime.toFixed(1)} s`;
+      metaLine2 = `R: ${r.toFixed(2)}  Idle ${t.idleTime.toFixed(1)} s`;
     } else if (currentAlgo === 'Lottery') {
-      metaLine2 = `🎟 ${t.tickets}`;
-      metaLine3 = `Idle  ${t.idleTime.toFixed(1)} s`;
+      metaLine2 = `🎟 ${t.tickets}  Idle ${t.idleTime.toFixed(1)} s`;
     } else {
-      metaLine2 = `Wait  ${t.waitTime.toFixed(1)} s`;
-      metaLine3 = `Idle  ${t.idleTime.toFixed(1)} s`;
+      metaLine2 = `W ${t.waitTime.toFixed(1)}  I ${t.idleTime.toFixed(1)} s`;
     }
   }
 
@@ -106,7 +104,6 @@ function makeTaskEl(t, extraClass = '') {
     `<div class="task-meta">` +
       `<span>${metaLine1}</span>` +
       `<span>${metaLine2}</span>` +
-      (metaLine3 ? `<span>${metaLine3}</span>` : '') +
     `</div>` +
     (isStarving && currentAlgo !== 'EDF'
       ? `<span class="starve-icon" data-tooltip="上次執行後空閒 ${t.idleTime.toFixed(1)} s\n飢餓警戒線：${STARVATION_LIMIT} s">!</span>`
@@ -189,19 +186,19 @@ function renderCPU() {
 }
 
 function renderStats() {
-  const { completedTasks, simTime, busyTime, nextId } = sched;
-  const generated = nextId - 1;
-  const atLimit   = generated >= MAX_TASKS;
+  const { completedTasks, simTime, busyTime } = sched;
+  const live    = sched.readyQueue.length + (sched.currentTask ? 1 : 0);
+  const atLimit = live >= MAX_TASKS;
 
-  sDone.textContent         = completedTasks.length;
-  simClockEl.textContent    = `T = ${simTime.toFixed(1)} s`;
-  factoryTotal.textContent  = `${generated} / ${MAX_TASKS}`;
-  btnSpawn.hidden = !atLimit;
+  sDone.textContent        = completedTasks.length;
+  simClockEl.textContent   = `T = ${simTime.toFixed(1)} s`;
+  factoryTotal.textContent = `${live} / ${MAX_TASKS}`;
+  btnSpawn.hidden  = true; // no longer needed with concurrent cap
   btnProdOne.disabled = atLimit;
 
   if (atLimit) {
-    factoryLabelEl.textContent = 'Completed';
-    factoryLabelEl.style.color = 'var(--nord11)';
+    factoryLabelEl.textContent = 'Waiting';
+    factoryLabelEl.style.color = 'var(--nord13)';
   } else if (sched.producerStopped) {
     factoryLabelEl.textContent = 'Paused';
     factoryLabelEl.style.color = 'var(--nord13)';
@@ -223,7 +220,7 @@ function renderStats() {
   sMissedEl.hidden = missed == null;
   if (missed != null) sMissedCountEl.textContent = missed;
 
-  if (!paused && !atLimit && !sched.producerStopped) {
+  if (!paused && !atLimit && !sched.producerStopped) { // atLimit now = concurrent cap full
     factoryIconEl.classList.add('spinning');
     factoryIconEl.style.animationDuration = `${Math.max(0.2, 1 / speed).toFixed(2)}s`;
   } else {
@@ -231,10 +228,60 @@ function renderStats() {
   }
 }
 
+function renderLog() {
+  if (logModal.hidden) return;
+
+  const entries = sched.completionLog;
+  if (entries.length === 0) {
+    logSummary.innerHTML = '';
+    logContent.innerHTML = '<p class="log-empty">No tasks completed yet.</p>';
+    return;
+  }
+
+  // Summary bar
+  const avgTA   = entries.reduce((s, e) => s + e.turnaround, 0) / entries.length;
+  const avgWait = entries.reduce((s, e) => s + e.totalWait, 0) / entries.length;
+  const maxIdleEver = Math.max(...entries.map((e) => e.maxIdle));
+  logSummary.innerHTML =
+    `<span>Completed: <b>${entries.length}</b></span>` +
+    `<span>Avg turnaround: <b>${avgTA.toFixed(1)} s</b></span>` +
+    `<span>Avg wait: <b>${avgWait.toFixed(1)} s</b></span>` +
+    `<span>Peak idle: <b class="${maxIdleEver >= STARVATION_LIMIT ? 'log-warn' : ''}">${maxIdleEver.toFixed(1)} s</b></span>`;
+
+  // Table rows (newest first)
+  const rows = [...entries].reverse().map((e) => {
+    const idleClass = e.maxIdle >= STARVATION_LIMIT ? ' class="log-warn"' : '';
+    return `<tr>
+      <td><span class="task-chip" style="background:${e.color}">T${e.id}</span></td>
+      <td>${e.arrivedAt.toFixed(1)} s</td>
+      <td>${e.completedAt.toFixed(1)} s</td>
+      <td>${e.turnaround.toFixed(1)} s</td>
+      <td>${e.burstTime.toFixed(1)} s</td>
+      <td>${e.totalWait.toFixed(1)} s</td>
+      <td${idleClass}>${e.maxIdle.toFixed(1)} s</td>
+    </tr>`;
+  }).join('');
+
+  logContent.innerHTML =
+    `<table class="log-table">
+      <thead><tr>
+        <th>Task</th>
+        <th>Arrived</th>
+        <th>Done</th>
+        <th>Turnaround</th>
+        <th>Burst</th>
+        <th>Total Wait</th>
+        <th>Max Idle</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
 function updateUI() {
   renderQueue();
   renderCPU();
   renderStats();
+  renderLog();
   const ve = ganttViewEnd ?? sched.simTime;
   renderGantt(ganttCanvas, sched, ve);
 }
@@ -594,6 +641,11 @@ $('lang-toggle').addEventListener('click', () => {
   modalLang = modalLang === 'en' ? 'zhTW' : 'en';
   renderModal();
 });
+
+$('btn-log').addEventListener('click', () => { logModal.hidden = false; renderLog(); });
+$('close-log-modal').addEventListener('click', () => { logModal.hidden = true; });
+logModal.addEventListener('click', (e) => { if (e.target === logModal) logModal.hidden = true; });
+mathModal.addEventListener('click', (e) => { if (e.target === mathModal) mathModal.hidden = true; });
 
 // ── Kick off ──────────────────────────────────────────────────────────────────
 requestAnimationFrame(loop);

@@ -25,7 +25,8 @@ export class Task {
     this.color = TASK_COLORS[(id - 1) % TASK_COLORS.length];
     this.priority = Math.ceil(Math.random() * 5); // 1 = highest, 5 = lowest
     this.level = 0;                                // MLFQ queue level (0–2)
-    this.idleTime = 0;                             // time in queue since last CPU dispatch
+    this.idleTime    = 0; // time in queue since last CPU dispatch
+    this.maxIdleTime = 0; // peak idleTime ever recorded (for log)
     this.deadline = +(simTime + this.burstTime * (1 + Math.random() * 2)).toFixed(1); // EDF
     this.tickets  = Math.ceil(Math.random() * 10);  // Lottery
     this._deadlineMissed = false;
@@ -45,6 +46,8 @@ export class BaseScheduler {
     this.nextId    = 1;
     this.taskCap   = MAX_TASKS; // producer stops here; can be raised via spawn
     this._prodAccum      = 0;
+    /** @type {{ id:number, color:string, arrivedAt:number, completedAt:number, turnaround:number, totalWait:number, maxIdle:number, burstTime:number }[]} */
+    this.completionLog   = [];
     this.arrivalRate     = 1;     // tasks / sim-second
     this.producerStopped = false; // manual pause from UI
     /** @type {{ taskId:number, color:string, start:number, end:number }[]} */
@@ -61,24 +64,33 @@ export class BaseScheduler {
     this._dispatch();   // pick next if CPU is free
   }
 
+  /** Number of tasks currently alive in the system (queue + CPU). */
+  _liveTasks() {
+    return this.readyQueue.length + (this.currentTask ? 1 : 0);
+  }
+
   _runProducer(dt) {
-    if (this.nextId > this.taskCap || this.producerStopped) return;
+    if (this.producerStopped || this._liveTasks() >= MAX_TASKS) return;
     this._prodAccum += dt;
     const interval = 1 / this.arrivalRate;
-    while (this._prodAccum >= interval && this.nextId <= this.taskCap) {
+    while (this._prodAccum >= interval && this._liveTasks() < MAX_TASKS) {
       this._prodAccum -= interval;
       this.readyQueue.push(new Task(this.nextId++, this.simTime));
     }
   }
 
-  /** Immediately emit one task, ignoring producerStopped but respecting taskCap. */
+  /** Immediately emit one task (ignores producerStopped; respects concurrent cap). */
   spawnOne() {
-    if (this.nextId > this.taskCap) return;
+    if (this._liveTasks() >= MAX_TASKS) return;
     this.readyQueue.push(new Task(this.nextId++, this.simTime));
   }
 
   _accrueWait(dt) {
-    for (const t of this.readyQueue) { t.waitTime += dt; t.idleTime += dt; }
+    for (const t of this.readyQueue) {
+      t.waitTime  += dt;
+      t.idleTime  += dt;
+      if (t.idleTime > t.maxIdleTime) t.maxIdleTime = t.idleTime;
+    }
   }
 
   /** Give the CPU to a task and record when the segment started. */
@@ -115,6 +127,16 @@ export class BaseScheduler {
       const done = this.currentTask;
       this._evictCPU(); // records gantt segment, clears currentTask
       this.completedTasks.push(done);
+      this.completionLog.push({
+        id:          done.id,
+        color:       done.color,
+        arrivedAt:   done.arrivalTime,
+        completedAt: this.simTime,
+        turnaround:  this.simTime - done.arrivalTime,
+        totalWait:   done.waitTime,
+        maxIdle:     done.maxIdleTime,
+        burstTime:   done.burstTime,
+      });
       this._onTaskComplete(done);
     }
   }
@@ -252,13 +274,13 @@ export class MLFQScheduler extends BaseScheduler {
   }
 
   _runProducer(dt) {
-    if (this.nextId > this.taskCap) return;
+    if (this.producerStopped || this._liveTasks() >= MAX_TASKS) return;
     this._prodAccum += dt;
     const interval = 1 / this.arrivalRate;
-    while (this._prodAccum >= interval && this.nextId <= this.taskCap) {
+    while (this._prodAccum >= interval && this._liveTasks() < MAX_TASKS) {
       this._prodAccum -= interval;
       const task = new Task(this.nextId++, this.simTime);
-      task.level = 0; // every new task enters at Q0
+      task.level = 0;
       this.readyQueue.push(task);
     }
   }

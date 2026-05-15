@@ -52,12 +52,32 @@
     #header label { display:flex; align-items:center; gap:0.35rem; }
 
     select {
+      appearance: none;
+      -webkit-appearance: none;
       background: var(--nord2);
       border: 1px solid var(--nord3);
       color: var(--nord6);
       border-radius: 4px;
-      padding: 0.2rem 0.45rem;
+      padding: 0.2rem 1.5rem 0.2rem 0.45rem;
       font: inherit;
+      cursor: pointer;
+    }
+
+    .select-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .select-wrap::after {
+      content: '▾';
+      position: absolute;
+      right: 0.42rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--nord9);
+      pointer-events: none;
+      font-size: 0.85rem;
+      line-height: 1;
     }
 
     button {
@@ -107,6 +127,11 @@
       background: var(--nord1);
       border-bottom: 1px solid var(--nord2);
       flex-shrink: 0;
+    }
+    section > h2[data-tooltip] {
+      cursor: help;
+      text-decoration: underline dotted var(--nord3);
+      text-underline-offset: 3px;
     }
 
     /* ── Producer ────────────────────────────────────────── */
@@ -369,8 +394,8 @@
     #footer b { color: var(--nord13); }
 
     /* ── Math Modal ──────────────────────────────────────── */
-    #math-modal[hidden] { display:none; }
-    #math-modal {
+    #math-modal[hidden], #log-modal[hidden] { display:none; }
+    #math-modal, #log-modal {
       position:fixed; inset:0;
       display:grid; place-items:center;
       background:rgba(46,52,64,0.82);
@@ -445,6 +470,60 @@
       opacity: 0.78;
     }
 
+    /* ── Log modal ───────────────────────────────────────── */
+    .log-summary {
+      font-size: 0.75rem;
+      color: var(--nord4);
+      margin-bottom: 0.6rem;
+      display: flex;
+      gap: 1.2rem;
+      flex-wrap: wrap;
+    }
+    .log-summary b { color: var(--nord13); }
+
+    .log-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+    }
+    .log-table th {
+      color: var(--nord8);
+      text-align: left;
+      padding: 4px 10px;
+      border-bottom: 1px solid var(--nord3);
+      font-size: 0.67rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      white-space: nowrap;
+    }
+    .log-table td {
+      padding: 5px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      color: var(--nord5);
+      white-space: nowrap;
+    }
+    .log-table tbody tr:last-child td { border-bottom: none; }
+    .log-table tbody tr:hover td { background: rgba(255,255,255,0.03); }
+
+    .task-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: rgba(0,0,0,0.75);
+    }
+
+    .log-warn { color: var(--nord11); font-weight: 600; }
+    .log-empty {
+      text-align: center;
+      color: var(--nord3);
+      padding: 2rem 0;
+      font-size: 0.85rem;
+    }
+
     /* ── Global tooltip ──────────────────────────────────── */
     #tooltip {
       position: fixed;
@@ -469,6 +548,7 @@
 <header id="header">
   <label>
     Algorithm
+    <div class="select-wrap">
     <select id="algo-select">
       <option value="FCFS">FCFS</option>
       <option value="SJF">SJF</option>
@@ -480,6 +560,7 @@
       <option value="Lottery">Lottery</option>
       <option value="EDF">EDF</option>
     </select>
+    </div>
   </label>
 
   <div id="speed-group">
@@ -502,6 +583,7 @@
 
   <button id="btn-reset">Reset</button>
   <button id="btn-math" title="Math behind the scene" style="font-size:1rem">💡</button>
+  <button id="btn-log"  title="Task completion log"   style="font-size:1rem">📋</button>
 
   <div id="sim-clock">T = 0.0 s</div>
 </header>
@@ -509,7 +591,7 @@
 <main id="main">
 
   <section id="producer">
-    <h2>Producer</h2>
+    <h2 data-tooltip="Process Creator（生產者）&#10;模擬作業系統持續建立新 Process 的機制。&#10;每隔固定時間產生一個 Task，送入 Ready Queue，&#10;等待排程器分配 CPU 使用權。">Producer</h2>
     <div id="factory">
       <span id="factory-icon">⚙️</span>
       <div id="factory-label">Running</div>
@@ -537,7 +619,7 @@
   </section>
 
   <section id="cpu-section">
-    <h2>CPU Core</h2>
+    <h2 data-tooltip="Processor Core（處理器核心）&#10;模擬 CPU 每次只能執行一個 Process。&#10;排程器決定哪個 Task 獲得使用權，&#10;切換時產生 Context Switch 開銷。">CPU Core</h2>
     <div id="cpu-slot">
       <span id="cpu-task-id"   style="color:var(--nord4)">Idle</span>
       <span id="cpu-remaining" style="color:var(--nord3)">—</span>
@@ -576,6 +658,17 @@
       </div>
     </div>
     <div id="math-content" class="modal-body"></div>
+  </div>
+</div>
+
+<div id="log-modal" role="dialog" aria-modal="true" hidden>
+  <div class="modal-panel" style="max-width:700px">
+    <div class="modal-header">
+      <h2>Task Completion Log</h2>
+      <button id="close-log-modal">Close</button>
+    </div>
+    <div id="log-summary" class="log-summary"></div>
+    <div id="log-content"></div>
   </div>
 </div>
 
